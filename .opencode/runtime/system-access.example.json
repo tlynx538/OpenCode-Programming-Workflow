@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "servers": {
+    "example": {
+      "ssh": "your-existing-ssh-alias"
+    }
+  },
+  "postgres": {
+    "example": {
+      "server": "example",
+      "env_file": "/srv/application/.env",
+      "url_key": "DATABASE_URL",
+      "sudo": false
+    },
+    "existing-local-app": {
+      "server": "example",
+      "local_env_file": "/path/to/application/.env",
+      "url_key": "DATABASE_URL"
+    }
+  },
+  "mysql": {},
+  "rabbitmq": {
+    "example": {
+      "server": "example",
+      "vhost": "/",
+      "sudo": false
+    }
+  },
+  "jenkins": {
+    "example": {
+      "server": "example",
+      "home": "/var/lib/jenkins",
+      "sudo": false
+    }
+  },
+  "local_http": {}
+}

@@ -1,6 +1,17 @@
-# Current authority update — November 1, 2026
+# Current system-access update
 
-The earlier sections below are historical. The current [agent contracts](AGENT_CONTRACTS.md) supersede them: Team Lead is primary and sole delegator, Poseidon owns design, Researcher has no design/interview skills, all host shell/Code Mode is denied, and Coder writes require trusted scope. Native grep is replaced by bounded literal project_search. Reviewer uses configured Docker tests and cannot edit through shell. Exact limits and residual semantic/trusted-server boundaries are in that contract. No OS sandbox or universal injection immunity is claimed.
+[System access](SYSTEM_ACCESS.md) supersedes the historical matrices below.
+Poseidon and Team Lead can administer remote infrastructure through native shell.
+All four workers, including Researcher, have remote read-only system observations
+and scoped local development writes. Host shell remains unavailable to workers;
+local commands run with isolated networking and no host credentials.
+
+# Current authority update — November 2, 2026
+
+The historical sections below are superseded by [agent contracts](AGENT_CONTRACTS.md).
+Poseidon is primary and sole delegator; Team Lead is a planning worker. Host shell, Code Mode and unclassified MCP tools remain denied. Scoped
+assignments, bounded project search, brief confirmation and worker recursion
+restrictions remain in effect. Researcher retains evidence tools without shell.
 
 # Authority, permissions and remaining boundaries
 

@@ -6,6 +6,7 @@ import sys
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '.opencode/runtime'))
 import runtime
@@ -68,6 +69,62 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(len(result.stdout), 4096)
         self.assertEqual(len(result.stderr), 4096)
+
+
+class NonGitRuntimeTests(unittest.TestCase):
+    def test_snapshot_filters_nested_repositories_dependencies_secrets_and_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('oslo/app.py', 'osaka/task.py', 'oslo/.git/config', 'oslo/.env',
+                         'osaka/node_modules/dep.js', '.opencode/workspace/settings.json', '.aws/config'):
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text('source')
+            before = runtime.fingerprint(root)
+            self.assertEqual(set(runtime.source_files(root)), {'oslo/app.py', 'osaka/task.py'})
+            with runtime.mirror(root) as snapshot:
+                self.assertEqual({p.relative_to(snapshot).as_posix() for p in snapshot.rglob('*') if p.is_file()},
+                                 {'oslo/app.py', 'osaka/task.py'})
+            (root / '.opencode/workspace/settings.json').write_text('state update')
+            self.assertEqual(runtime.fingerprint(root), before)
+            (root / 'oslo/app.py').chmod(0o755)
+            self.assertNotEqual(runtime.fingerprint(root), before)
+            (root / 'escape').symlink_to(root.parent)
+            with self.assertRaisesRegex(runtime.SandboxError, 'Symlink'):
+                runtime.source_files(root)
+
+    def test_missing_git_binary_and_empty_git_repository(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'app.py').write_text('source')
+            with patch.object(runtime, 'capture', side_effect=FileNotFoundError('git')):
+                self.assertEqual(set(runtime.source_files(root)), {'app.py'})
+                self.assertTrue(runtime.fingerprint(root))
+            runtime.execute(['git', 'init', '-q', str(root)])
+            runtime.git(root, 'add', 'app.py')
+            self.assertTrue(runtime.fingerprint(root))
+
+    def test_git_worktree_state_stays_in_the_shared_git_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'main'
+            root.mkdir()
+            runtime.execute(['git', 'init', '-q', str(root)])
+            runtime.git(root, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                        'commit', '--allow-empty', '-qm', 'fixture')
+            worktree = Path(directory) / 'worktree'
+            runtime.git(root, 'worktree', 'add', '-qb', 'other', str(worktree))
+            self.assertTrue((worktree / '.git').is_file())
+            self.assertEqual(runtime.workspace_home(root), runtime.workspace_home(worktree))
+            self.assertEqual(runtime.workspace_home(worktree), root / '.git/bdfl')
+
+    def test_non_git_state_rejects_external_symlinks_and_missing_workspaces(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
+            root = Path(directory)
+            (root / '.opencode').symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(runtime.SandboxError, 'symlink'):
+                runtime.workspace_home(root)
+            with self.assertRaisesRegex(runtime.SandboxError, 'does not exist'):
+                runtime.repository_root(root / 'missing')
 
 
 if __name__ == '__main__':

@@ -2,7 +2,8 @@
 import { createHash } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import path from 'node:path'
-export const roles = ['team-lead', 'poseidon', 'researcher', 'maintainer', 'coder', 'reviewer']
+import { homedir } from 'node:os'
+export const roles = ['poseidon', 'team-lead', 'researcher', 'maintainer', 'coder', 'reviewer']
 export const types = ['VERIFIED_FACT', 'DOCUMENTED_STANDARD', 'OBSERVED_CONVENTION', 'DESIGN_HYPOTHESIS', 'SUBJECTIVE_OPINION', 'UNSUPPORTED', 'UNKNOWN']
 export const words = text => String(text).trim().split(/\s+/u).filter(Boolean).length
 export const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -20,21 +21,28 @@ export function assignment(value, limits) {
   const t = structuredClone(value)
   need(Object.keys(t).every(k=>['id','to','objective','question','purpose','scope','exclusions','sourceTypes','skills','acceptance','nextAction','design','budget','briefID','briefVersion','reviewOf','researchTaskID','from','status'].includes(k)), 'Unknown assignment field')
   text(t.id, 'task id'); need(/^[a-zA-Z0-9_-]{1,64}$/.test(t.id), 'Unsafe task id')
-  need(roles.includes(t.to) && t.to !== 'team-lead', 'Unknown subordinate')
+  need(roles.includes(t.to) && t.to !== 'poseidon', 'Unknown subordinate')
   for (const k of ['objective', 'question', 'purpose', 'nextAction']) text(t[k], k)
   for (const k of ['scope', 'exclusions', 'sourceTypes', 'skills', 'acceptance']) list(t[k], k)
   need(t.scope.length && t.acceptance.length, 'Scope and acceptance required')
   t.scope.forEach(safeRelative); t.exclusions.forEach(safeRelative)
-  need(t.sourceTypes.every(x => ['local','web','mcp'].includes(x)), 'Unknown source type')
+  need(t.sourceTypes.every(x => ['local','web','mcp','system'].includes(x)), 'Unknown source type')
   t.budget = { ...limits, ...(t.budget ?? {}) }
-  for (const [k,v] of Object.entries(t.budget)) need(k in limits && Number.isInteger(v) && v > 0 && v <= limits[k], 'Budget needs operator authorization: ' + k)
+  for (const [k,v] of Object.entries(t.budget)) {
+    need(k in limits && Number.isInteger(v) && v > 0, 'Invalid budget: ' + k)
+    t.budget[k]=Math.min(v,limits[k])
+  }
   need(t.to !== 'researcher' || t.skills.every(s => s === 'karpathy-guidelines'), 'Unauthorized research skill')
   need(typeof t.design === 'boolean', 'Explicit design classification required')
   if (t.design && t.to === 'coder') { text(t.briefID, 'brief id'); need(Number.isInteger(t.briefVersion), 'Brief version required') }
-  return { ...t, from: 'team-lead', status: 'ASSIGNED' }
+  return { ...t, from: 'poseidon', status: 'ASSIGNED' }
 }
 export function validateBrief(b, previous) {
-  need(b && typeof b === 'object', 'Brief required'); text(b.id, 'brief id')
+  need(b && typeof b === 'object', 'Brief required')
+  b={...structuredClone(b),reason:b.reason??b['reason-for-revision']??b.reasonForRevision}
+  delete b['reason-for-revision'];delete b.reasonForRevision
+  if(b.reason===undefined)delete b.reason
+  text(b.id, 'brief id')
   need(/^[\w-]{1,64}$/.test(b.id), 'Unsafe brief id')
   need(b.version === (previous?.version ?? 0) + 1, 'Brief revision must advance once')
   for (const k of ['goals','preferences','prohibitions','functional','technical','accessibility','acceptance','openQuestions']) list(b[k], k)
@@ -61,29 +69,46 @@ export function validateBrief(b, previous) {
   }
   return { ...structuredClone(b), confirmed: false, previousHash: previous ? digest(previous) : null }
 }
+export function briefHash(brief) {
+  const value=structuredClone(brief);value.confirmed=false
+  for(const key of ['confirmedBy','confirmedAt'])delete value[key]
+  return digest(value)
+}
+
 export function handoff(h, task, state, limit) {
+  if(typeof h==='string')h={summary:h}
+  if(h&&typeof h==='object'&&Object.keys(h).length===1&&'handoff'in h){h=h.handoff;if(typeof h==='string'){try{h=JSON.parse(h)}catch{h={summary:h}}}}
   need(h && typeof h === 'object', 'Handoff required')
+  const provided=structuredClone(h)
+  text(provided.summary,'summary')
+  h={...handoffTemplate(task),...provided}
+  need(Buffer.byteLength(JSON.stringify(h))<=65536,'Handoff exceeds the 64 KiB storage limit; submit a focused report')
+  const warnings=[]
+
   need(Object.keys(h).every(k=>['taskID','from','to','objective','scope','exclusions','briefVersion','status','summary','claims','verification','uncertainty','nextAction','verdict','findings'].includes(k)), 'Unknown handoff field')
   for (const k of ['taskID','from','to','objective','summary','nextAction']) text(h[k], k)
-  need(h.taskID === task.id && h.from === task.to && h.to === 'team-lead', 'Unauthorized handoff routing')
+  need(h.taskID === task.id && h.from === task.to && h.to === 'poseidon', 'Unauthorized handoff routing')
   need(h.objective === task.objective, 'Objective changed')
   need(JSON.stringify(h.scope) === JSON.stringify(task.scope) && JSON.stringify(h.exclusions) === JSON.stringify(task.exclusions), 'Scope changed')
   need(h.briefVersion === (task.briefVersion ?? null), 'Brief version changed')
   list(h.uncertainty,'uncertainty'); list(h.verification,'verification')
   need(['COMPLETE','PARTIAL','INSUFFICIENT'].includes(h.status), 'Unknown handoff status')
-  need(words([h.summary, h.nextAction, ...h.uncertainty, ...h.verification, ...(h.claims??[]).map(c=>c.text), ...(h.findings??[]).flatMap(f=>Object.values(f))].join(' ')) <= limit, 'Human-readable handoff exceeds word limit')
+  if(words([h.summary,h.nextAction,...h.uncertainty,...h.verification,...(h.claims??[]).map(c=>c.text)].join(' '))>limit)warnings.push('Long report preserved; prefer a concise summary next time')
   need(Array.isArray(h.claims) && h.claims.length <= 32, 'Claims required')
   const sources = new Map(state.sources.map(s => [s.id,s]))
-  for (const c of h.claims) {
+  for (const [index,c] of h.claims.entries()) {
+    c.id??='C'+(index+1);c.type??='UNKNOWN';c.sourceIDs??=[]
     text(c.id,'claim id');text(c.text,'claim text');need(types.includes(c.type),'Unknown claim classification');list(c.sourceIDs,'source IDs')
     need(c.sourceIDs.every(id => sources.has(id)), 'Claim cites an unretrieved source')
     if (['VERIFIED_FACT','DOCUMENTED_STANDARD','OBSERVED_CONVENTION'].includes(c.type)) {
-      need(c.sourceIDs.length && typeof c.quote === 'string' && c.quote.trim(), 'Factual claim needs source and exact supporting excerpt')
-      need(c.sourceIDs.some(id => sources.get(id).excerpt.includes(c.quote)), 'Supporting excerpt not found in retrieved source')
+      const matched=c.sourceIDs.length&&typeof c.quote==='string'&&c.quote.trim()&&c.sourceIDs.some(id=>sources.get(id).excerpt.includes(c.quote))
+      c.evidenceStatus=matched?'QUOTE_MATCH_REVIEW_REQUIRED':'UNVERIFIED_REVIEW_REQUIRED'
+      if(!matched){c.requestedType=c.type;c.type='UNKNOWN';warnings.push('Claim '+c.id+': quotation not verified; retained for independent review')}
     }
   }
   need(new Set(h.claims.map(c=>c.id)).size === h.claims.length, 'Duplicate claim id')
-  need(words(JSON.stringify(h)) <= limit + 350, 'Structured handoff exceeds bounded envelope')
+  if(warnings.length)h.warnings=warnings
+  h.sourceIDs=state.sources.map(s=>s.id)
   if (h.from === 'reviewer') {
     need(['PASS','PASS_WITH_WARNINGS','FAIL','INCONCLUSIVE'].includes(h.verdict),'Reviewer verdict required')
     need(Array.isArray(h.findings), 'Review findings required')
@@ -98,7 +123,7 @@ export function handoff(h, task, state, limit) {
   return structuredClone(h)
 }
 export function fallback(task, state, reason) {
-  return {taskID:task.id,from:task.to,to:'team-lead',objective:task.objective,scope:task.scope,exclusions:task.exclusions,
+  return {taskID:task.id,from:task.to,to:'poseidon',objective:task.objective,scope:task.scope,exclusions:task.exclusions,
     briefVersion:task.briefVersion??null,status:'PARTIAL',summary:'Execution ended without an accepted handoff. Collected sources require review.',
     claims:[],sourceIDs:state.sources.map(s=>s.id),verification:[],uncertainty:[reason],nextAction:'Review collected evidence and explicitly reassign remaining work.',
     ...(task.to === 'reviewer' ? {verdict:'INCONCLUSIVE',findings:[]} : {})}
@@ -112,16 +137,23 @@ export function spend(state, kind, limits, now) {
   if(kind==='websearch') state.searches=(state.searches??0)+1
   if(kind==='webfetch') state.pages=(state.pages??0)+1
 }
+export function hostControlPath(target, home=homedir()) {
+  return ['.ssh','.aws','.gnupg','.config/opencode','.codex','.agents','.local/share/opencode','.local/state/opencode'].some(name=>{
+    const base=path.join(home,name)
+    return target===base||target.startsWith(base+path.sep)
+  })
+}
 export async function scopedPath(root, candidate, task, write=false) {
   text(candidate,'tool path')
   const absolute=path.resolve(root,candidate);let ancestor=absolute;const tail=[]
   while(true) { try { ancestor=await realpath(ancestor);break } catch(e) { if(e.code!=='ENOENT')throw e;const up=path.dirname(ancestor);need(up!==ancestor,'Cannot resolve path');tail.unshift(path.basename(ancestor));ancestor=up } }
   const canonicalRoot=await realpath(root)
+  need(!hostControlPath(path.join(ancestor,...tail)),'Protected host credentials or agent control storage')
   need(ancestor===canonicalRoot || ancestor.startsWith(canonicalRoot+path.sep),'Path escapes project or follows external symlink')
-  const rel=path.relative(canonicalRoot,path.join(ancestor,...tail)).split(path.sep).join('/');safeRelative(rel)
+  const rel=path.relative(canonicalRoot,path.join(ancestor,...tail)).split(path.sep).join('/') || '.';safeRelative(rel)
   const includes = (p,x) => p==='.' || x===p || x.startsWith(p+'/')
   need(task.scope.some(p=>includes(p,rel)) && !task.exclusions.some(p=>includes(p,rel)), 'Path outside task scope')
-  if(write) need(task.to==='coder','Only Coder edits assigned implementation')
+  if(write) need(roles.includes(task.to),'Only known agents edit assigned local development source')
   return absolute
 }
 export function editPaths(input) {
@@ -161,4 +193,54 @@ export async function searchProject(root, task, query, signal) {
     }
   }
   return {matches,filesInspected:files,partial:truncated||queue.length>0,coverage:'Bounded local search; absence of matches does not establish absence.'}
+}
+
+/** Bounded filename discovery inside assigned paths; never follows symlinks. */
+export async function discoverProject(root, task, input, signal) {
+  const { opendir, lstat } = await import('node:fs/promises')
+  const pattern=input.pattern
+  need(typeof pattern==='string'&&pattern.length>0&&pattern.length<=256&&!/[\\\x00-\x1f{}[\]]/.test(pattern),'Use a bounded glob with *, ** or ?')
+  need(!path.isAbsolute(pattern)&&!pattern.split('/').some(p=>p==='..'||p==='.'),'Glob pattern must stay relative to its search directory')
+  const base=path.resolve(root,input.path??'.'),canonicalRoot=await realpath(root)
+  const relativeBase=path.relative(canonicalRoot,base).split(path.sep).join('/')||'.'
+  safeRelative(relativeBase)
+  const contains=(a,b)=>a==='.'||a===b||b.startsWith(a+'/')
+  const queue=task.scope.filter(p=>contains(relativeBase,p)||contains(p,relativeBase)).map(p=>contains(p,relativeBase)?relativeBase:p)
+  need(queue.length,'Search directory is outside task scope')
+  let regex=''
+  for(let i=0;i<pattern.length;i++){
+    const c=pattern[i]
+    if(c==='*'&&pattern[i+1]==='*') { i++;if(pattern[i+1]==='/'){i++;regex+='(?:.*/)?'}else regex+='.*' }
+    else regex+=c==='*'?'[^/]*':c==='?'?'[^/]':c.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')
+  }
+  const matcher=new RegExp('^'+regex+'$'),files=[],seen=new Set()
+  const limit=Math.min(Number.isInteger(input.limit)&&input.limit>0?input.limit:100,200)
+  let visited=0,entries=0,truncated=false
+  while(queue.length&&visited<512&&files.length<limit){
+    signal?.throwIfAborted();const rel=queue.shift();if(seen.has(rel))continue;seen.add(rel);visited++
+    if(rel!=='.')try{safeRelative(rel)}catch{continue}
+    if(task.exclusions.some(p=>contains(p,rel)))continue
+    if(rel!=='.')try{await scopedPath(canonicalRoot,rel,task)}catch{continue}
+    const absolute=path.join(canonicalRoot,rel),st=await lstat(absolute).catch(e=>{if(e.code==='ENOENT')return null;throw e})
+    if(!st||st.isSymbolicLink())continue
+    if(st.isDirectory()){
+      const directory=await opendir(absolute)
+      for await(const entry of directory){
+        if(++entries>4096){truncated=true;break}
+        if(entry.isSymbolicLink()||['node_modules','dist','build','coverage','__pycache__'].includes(entry.name))continue
+        const next=rel==='.'?entry.name:rel+'/'+entry.name
+        try{safeRelative(next)}catch{continue}
+        if(queue.length<512)queue.push(next);else truncated=true
+      }
+    }else if(st.isFile()&&matcher.test(path.relative(base,absolute).split(path.sep).join('/')))files.push(rel)
+  }
+  return {files,partial:truncated||queue.length>0,coverage:'Bounded filename discovery within assigned scope.'}
+}
+
+export function handoffTemplate(task) {
+  return {taskID:task.id,from:task.to,to:'poseidon',objective:task.objective,scope:task.scope,
+    exclusions:task.exclusions,briefVersion:task.briefVersion??null,status:'PARTIAL',
+    summary:'Replace with observed findings.',claims:[],verification:[],uncertainty:[],
+    nextAction:'Coordinator reviews findings and assigns remaining work.',
+    ...(task.to==='reviewer'?{verdict:'INCONCLUSIVE',findings:[]}: {})}
 }

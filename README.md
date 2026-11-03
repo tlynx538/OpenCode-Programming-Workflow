@@ -26,13 +26,17 @@ desktop text editor. OpenCode agents created both from empty repositories. See
 - Provides bounded runtime tools, Docker test workspaces, skill provenance checks,
   and an offline benchmark for evaluating prompt changes against task outcomes.
 
+The coordinator and research prompts also retain selected guidance from the local
+CLI skill catalog, with fallbacks for unavailable optional skills. See the
+[adaptation review](docs/LOCAL_SKILL_ADAPTATION.md) for role mappings and limits.
+
 ## Agents and responsibilities
 
 | Agent | Responsibility | Configured model |
 | --- | --- | --- |
 | **Team Lead** | Execution, task decomposition, dependencies, assignments, acceptance checks and escalation | `openai/gpt-6-sol` |
 | **Poseidon** | User intent, first-principles discovery, focused questioning, design briefs and fidelity checks | `openai/gpt-6-sol` |
-| **Researcher** | Read-only evidence gathering; challenges assumptions and overlooked workflows; distinguishes facts from preferences | `openrouter/thinkingmachines/inkling:free` |
+| **Researcher** | Evidence gathering with remote read-only and scoped local writes; challenges assumptions and overlooked workflows; distinguishes facts from preferences | `openrouter/thinkingmachines/inkling:free` |
 | **Maintainer** | Architecture, platform feasibility, compatibility and capability fit | `openai/gpt-6-sol` |
 | **Coder** | Scoped implementation, working user journeys and regression checks | `openai/gpt-6-sol` |
 | **Reviewer** | Independent correctness and requirement review; checks claims against source and actual test evidence | `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` |
@@ -43,16 +47,19 @@ OpenCode connections and model availability.
 
 ### Repository bundle versus the tested installation
 
-This repository's current bundle makes **Team Lead the primary coordinator** and
-Poseidon its user-intent specialist. Only Team Lead delegates; workers cannot
-launch other agents. The bundle includes explicit assignment/handoff contracts,
-versioned brief confirmation, bounded tools and research critique gates.
+This repository's bundle starts with **Poseidon as the sole primary coordinator**.
+Poseidon owns discovery and execution, and delegates to Team Lead for planning or
+to the other specialists through explicit assignment/handoff contracts. Workers
+cannot launch agents. Agents retain their scoped read, search, edit, skill and
+configured sandbox test tools. Permitted native tools are exposed directly
+without Code Mode. Host shell belongs to Poseidon/Team Lead; other agents use
+the restricted system-access tool.
 
 The installed configuration that built PocketCalc was the earlier **Poseidon-led
 native workflow**, with Team Lead as a planning worker. Discovery v2 prompt updates
 were installed into that configuration while preserving its models, permissions
 and hierarchy. Its workers had native host tools; it did not use the repository's
-stricter no-host-shell policy. PocketCalc is evidence for that tested workflow,
+assignment and evidence controls. PocketCalc is evidence for that tested workflow,
 not proof that every newer runtime control in this bundle has been live-validated.
 See [the discovery update](docs/usage-reviews/2026-11-01-discovery-v2.md) and
 [calculator session review](docs/usage-reviews/2026-11-01-calculator-session-reflection.md).
@@ -201,12 +208,12 @@ agent and plugin discovery when comparing installations.
 
 ## Tools, testing and resource controls
 
-The **repository bundle** denies agent host shell, Code Mode and arbitrary MCP
-mutation access. Coder writes require a scoped assignment; Reviewer stays read-only.
-`project_search` bounds literal source searches and excludes protected paths.
-Unknown tools are denied; connected resource access requires task approval. These
-controls are not an OS sandbox or proof of semantic prompt-injection resistance.
-Trusted server plugins and operator actions remain privileged.
+The repository grants Poseidon and Team Lead host shell for authorized
+administration. Researcher, Maintainer, Coder and Reviewer have remote read-only
+operations and scoped local development writes through `system_access` and an
+isolated command runner. See [system access](docs/SYSTEM_ACCESS.md) for setup,
+connection profiles and the enforcement boundaries. Trusted server plugins and
+operator actions remain privileged.
 
 The operator configures Docker images and commands. Agents run configured tests
 through `poseidon_workspace`; missing setup is an explicit verification limitation.
@@ -217,7 +224,9 @@ See [settings examples](.opencode/runtime/settings.example.json).
 Default resource admission is one worker, one heavy tool and one delegation level.
 [agent-limits.json](.opencode/runtime/agent-limits.json) adds per-role step, call,
 time and output budgets. Research defaults to three searches, four retrievals,
-eight calls, eight steps, 120 seconds and a 300-word handoff. A final submission
+24 calls, 16 steps, 300 seconds and a suggested 600-word report. Reports can use
+minimal submit objects or ordinary final prose; routing is automatic and unreviewed
+reports stay PARTIAL. Public help/evidence actions avoid reading protected runtime files. A final submission
 slot is reserved. Limits do not make incomplete evidence a successful result.
 
 The provider budget guard caps observed NVIDIA/Nemotron requests at **20/minute
@@ -268,3 +277,17 @@ Resource-governor integration tests need macOS process-metric access. A restrict
 execution sandbox may block those metrics, which deliberately fails admission
 closed. Deterministic tests need no provider requests. Passing infrastructure tests
 does not establish every live agent or GUI outcome. See [validation notes](docs/validation.md).
+
+### Folders without Git
+
+The workflow also supports ordinary folders and workspace roots containing
+multiple repositories. Sandbox settings, session state, logs and test evidence
+live in `.opencode/workspace/`; no `git init` is needed. Git projects continue to
+use their shared Git directory. A new Git repository does not need a first commit.
+
+Without Git, snapshots enumerate ordinary files and exclude credentials, agent
+configuration and common dependency/build folders (`node_modules`, virtualenvs,
+cache, `dist`, `build`, `coverage`, `.next`). Symlinks are rejected rather than
+followed. Git ignore rules apply in Git projects; the ordinary-folder fallback
+uses these fixed exclusions instead. Docker and operator-configured test commands
+are still required for sandbox testing.

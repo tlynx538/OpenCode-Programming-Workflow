@@ -40,7 +40,7 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue((bundle / 'skill-sources/patches/seo-content.json').is_file())
             self.assertTrue((bundle / 'skill-resources/claude-seo/scripts/url_safety.py').is_file())
             config = bundle / 'opencode.json'
-            self.assertEqual(json.loads(config.read_text())['default_agent'], 'team-lead')
+            self.assertEqual(json.loads(config.read_text())['default_agent'], 'poseidon')
             designer = bundle / 'agents/researcher.md'
             designer.write_text('preserve custom designer')
             config.write_text('preserve existing user config')

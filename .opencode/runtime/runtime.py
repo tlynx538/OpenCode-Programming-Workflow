@@ -93,16 +93,75 @@ def git(root, *args, env=None):
     return execute(['git', '-C', str(root), *args], env=env)
 
 
+def repository_root(root):
+    """Return the Git worktree root, or None for an ordinary directory/no Git binary."""
+    root = Path(root).resolve()
+    require(root.is_dir(), 'Workspace directory does not exist: ' + str(root))
+    try:
+        result = capture(['git', '-C', str(root), 'rev-parse', '--show-toplevel'],
+                         env={**os.environ, 'LC_ALL': 'C'})
+    except FileNotFoundError:
+        return None
+    if result.returncode == 0:
+        return Path(result.stdout.decode().strip()).resolve()
+    require(b'not a git repository' in result.stderr.lower(),
+            'Cannot inspect workspace: ' + result.stderr.decode(errors='replace')[-4000:])
+    return None
+
+
+def workspace_home(root):
+    """Preserve Git-common state; ordinary folders use protected local control storage."""
+    root = Path(root).resolve()
+    if repository_root(root) is not None:
+        common = Path(git(root, 'rev-parse', '--git-common-dir').decode().strip())
+        result = (common if common.is_absolute() else root / common).resolve() / 'bdfl'
+    else:
+        result = root / '.opencode' / 'workspace'
+        require(not (root / '.opencode').is_symlink() and not result.is_symlink(),
+                'Workspace state must not be a symlink')
+    result.mkdir(parents=True, exist_ok=True)
+    return result
+
+
+NON_GIT_EXCLUDES = CONTROL | {'node_modules', '.venv', 'venv', '__pycache__',
+                              '.cache', 'dist', 'build', 'coverage', '.next', '.DS_Store'}
+
+
+def directory_sources(root):
+    """Enumerate ordinary-folder source without traversing control/dependency trees."""
+    names = []
+    def failed(error):
+        raise error
+    for directory, dirs, files in os.walk(root, followlinks=False, onerror=failed):
+        for name in sorted(dirs + files):
+            relative = (Path(directory) / name).relative_to(root).as_posix()
+            if name in NON_GIT_EXCLUDES or secret(relative):
+                if name in dirs:
+                    dirs.remove(name)
+                continue
+            candidate = Path(directory) / name
+            require(not candidate.is_symlink(), 'Symlink in candidate source is unsupported: ' + relative)
+            if name in files:
+                require(candidate.is_file(), 'Unsupported source file: ' + relative)
+                names.append(relative)
+        dirs.sort()
+    return names
+
+
 def secret(name):
     return any(fnmatch.fnmatch(x.lower(), pat) for x in PurePosixPath(name).parts
                for pat in ('.env', '.env.*', '*.pem', '*.key', '.ssh', '.aws', 'credentials', 'auth.json'))
 
 
 def source_files(root):
-    """Tracked plus non-ignored untracked files; symlinks are rejected, never dereferenced."""
-    require(not any(line.startswith(b'160000 ') for line in git(root, 'ls-files', '--stage').splitlines()),
-            'Git submodules are unsupported in agent-visible source')
-    names = git(root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard').decode().split('\0')
+    """Git-indexed source or filtered ordinary-folder files; symlinks are never followed."""
+    root = Path(root).resolve()
+    if repository_root(root) is None:
+        names = directory_sources(root)
+    else:
+        require(not any(line.startswith(b'160000 ') for line in git(root, 'ls-files', '--stage').splitlines()),
+                'Git submodules are unsupported in agent-visible source')
+        names = git(root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard').decode().split('\0')
     out = {}
     for name in sorted(set(names) - {''}):
         p = root / name
@@ -116,7 +175,12 @@ def source_files(root):
 
 
 def fingerprint(root):
-    return digest({'head': git(root, 'rev-parse', 'HEAD').decode().strip(), 'files': source_files(root)})
+    head = None
+    if repository_root(root) is not None:
+        result = capture(['git', '-C', str(root), 'rev-parse', '--verify', 'HEAD'])
+        if result.returncode == 0:
+            head = result.stdout.decode().strip()
+    return digest({'head': head, 'files': source_files(root)})
 
 
 def validate_tests(tests):

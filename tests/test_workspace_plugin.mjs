@@ -8,9 +8,9 @@ import path from "node:path"
 import { execFileSync } from "node:child_process"
 import { setTimeout } from "node:timers/promises"
 
-async function fixture(prefix = "poseidon-native-", native = []) {
+async function fixture(prefix = "poseidon-native-", native = [], git = true) {
   const directory = await mkdtemp(path.join(tmpdir(), prefix))
-  execFileSync("git", ["init", "-q", directory])
+  if (git) execFileSync("git", ["init", "-q", directory])
   const hooks = new Map(), commands = new Map(), prompts = [], queue = [], synthetic = []
   const tools = new Map(native.map(t => [t.id, { ...t }]))
   let tool, stopped = false
@@ -26,7 +26,7 @@ async function fixture(prefix = "poseidon-native-", native = []) {
     },
     permission: { assert: async ({ action, resources, agent }) => {
       assert.equal(action, "poseidon_workspace")
-      if (agent === "researcher" || (agent && agent !== "team-lead" && ["configure", "end_sandbox"].includes(resources[0]))) {
+      if (agent && !["poseidon", "team-lead"].includes(agent) && !["settings", "status"].includes(resources[0])) {
         throw new Error("Permission denied")
       }
     } },
@@ -45,7 +45,7 @@ async function fixture(prefix = "poseidon-native-", native = []) {
       stopped = true
     } },
   })
-  const marker = (id) => path.join(directory, ".git/bdfl/sessions", createHash("sha256").update(JSON.stringify(id)).digest("hex").slice(0, 24), "ended")
+  const marker = (id) => path.join(directory, git ? ".git/bdfl/sessions" : ".opencode/workspace/sessions", createHash("sha256").update(JSON.stringify(id)).digest("hex").slice(0, 24), "ended")
   const waitForMarker = async (id) => {
     for (let attempt = 0; attempt < 200; attempt++) {
       try { await access(marker(id)); return } catch { await setTimeout(10) }
@@ -120,12 +120,12 @@ test("log command follows native operation output with quoted paths and rejects 
 test("workspace checks the calling worker before helper execution", async () => {
   const f = await fixture()
   try {
-    for (const action of ["settings", "configure", "test", "status", "end_sandbox"]) {
-      await assert.rejects(f.tool.execute({ action }, { sessionID: "child", agent: "researcher" }), /Permission denied|Operator configures|Session role changed/)
+    for (const action of ["configure", "test", "end_sandbox"]) {
+      await assert.rejects(f.tool.execute({ action }, { sessionID: "child", agent: "researcher" }), /Permission denied|Top-level agents|Session role changed/)
     }
     for (const agent of ["coder", "reviewer"]) {
       for (const action of ["configure", "end_sandbox"]) {
-        await assert.rejects(f.tool.execute({ action }, { sessionID: "child", agent }), /Permission denied|Operator configures|Session role changed/)
+        await assert.rejects(f.tool.execute({ action }, { sessionID: "child", agent }), /Permission denied|Top-level agents|Session role changed/)
       }
     }
     // Rejection happened before the host helper created settings or operation logs.
@@ -145,12 +145,12 @@ test("native tool transforms admit agent and heavy calls without holding a dispa
   }
   const dispatcher = async () => ({ content: "dispatch" })
   const f = await fixture("poseidon-governed-", [
-    {id:"glob",execute}, {id:"shell",execute}, {id:"remote_mcp",execute}, {id:"execute",execute:dispatcher},
+    {id:"read",execute}, {id:"shell",execute}, {id:"remote_mcp",execute}, {id:"execute",execute:dispatcher},
   ])
   try {
-    await Promise.all(Array.from({length:4}, () => f.tools.get("glob").execute({}, {sessionID:"parent", agent:"team-lead"})))
+    await Promise.all(Array.from({length:4}, () => f.tools.get("read").execute({path:"a.md"}, {sessionID:"parent", agent:"team-lead"})))
     assert.equal(peak,1)
-    for (const id of ["shell", "remote_mcp", "execute"]) {
+    for (const id of ["remote_mcp", "execute"]) {
       await assert.rejects(f.tools.get(id).execute({}, {sessionID:"parent",agent:"team-lead"}), /Unclassified tool/)
     }
   } finally { await f.cleanup() }
@@ -163,5 +163,33 @@ test("an existing global workspace tool is reused without duplicate sandbox hook
   await f.hooks.get('prompt')({sessionID:'parent'})
   await assert.rejects(access(path.join(f.directory,'.git/bdfl/operations')))
   assert.ok(f.tools.has('agent_contracts'));assert.ok(f.commands.has('confirm-brief'))
+ }finally{await f.cleanup()}
+})
+
+test("ordinary-folder prompt preparation and log viewing use local workspace state", async () => {
+  const f = await fixture("poseidon-non-git-", [], false)
+  try {
+    await f.hooks.get("prompt")({ sessionID: "parent" })
+    const settings = JSON.parse((await f.tool.execute({action:"settings"}, {sessionID:"child"})).content)
+    assert.equal(settings.settings, null)
+    assert.equal(settings.settings_file, path.join(f.directory,".opencode/workspace/settings.json"))
+    const operations = await readdir(path.join(f.directory,".opencode/workspace/operations"))
+    assert.equal(operations.length, 1)
+    await f.commands.get("poseidon-logs").execute({sessionID:"parent",prompt:{text:operations[0]}})
+    assert.match(f.synthetic.at(-1).text, /operation completed/)
+    await f.commands.get("poseidon-end").execute({sessionID:"parent"})
+    await access(f.marker("parent"))
+    await assert.rejects(access(path.join(f.directory,".git")))
+  } finally { await f.cleanup() }
+})
+
+test("all workers can read sandbox metadata but cannot mutate a Docker target",async()=>{
+ const f=await fixture()
+ try{
+  for(const role of ['researcher','maintainer','coder','reviewer']){
+   const result=JSON.parse((await f.tool.execute({action:'settings'},{sessionID:role,agent:role})).content)
+   assert.equal(result.settings,null)
+   for(const action of ['configure','test','end_sandbox'])await assert.rejects(f.tool.execute({action},{sessionID:role,agent:role}),/Top-level agents/)
+  }
  }finally{await f.cleanup()}
 })

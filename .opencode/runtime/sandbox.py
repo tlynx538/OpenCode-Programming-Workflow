@@ -15,10 +15,7 @@ import runtime as b
 
 
 def home(repo):
-    common = Path(b.git(repo, 'rev-parse', '--git-common-dir').decode().strip())
-    result = (common if common.is_absolute() else Path(repo) / common).resolve() / 'bdfl'
-    result.mkdir(parents=True, exist_ok=True)
-    return result
+    return b.workspace_home(repo)
 
 
 def settings_path(repo):

@@ -85,3 +85,12 @@ possible product/design change hidden in general-purpose source. Trusted plugins
 the server operator and arbitrary user-authored secrets in otherwise normal source
 remain outside these policy guarantees. Do not describe these controls as an OS
 sandbox or universal prompt-injection immunity.
+
+## November 3 runtime correction
+
+Session `ses_e6198aafaffeFFRHBxyVZLHkFE` exposed overly strict handoff formatting,
+short worker budgets, missing declared output on native tool replacements, and a
+revision field mismatch. The current contract guide supersedes the earlier proposal
+to reject long reports or every unmatched quotation. Preserve useful reports, label
+unverified claims, keep independent critique, provide public contract help and
+readable brief files, and use stable idempotent confirmation receipts.

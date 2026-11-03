@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -22,7 +23,8 @@ def fingerprint(root):
     result = {}
     total = 0
     for directory, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = [d for d in dirs if d not in {'.git', 'node_modules', '__pycache__',
+        dirs[:] = [d for d in dirs if (Path(directory) / d).relative_to(root).as_posix() != '.opencode/workspace'
+                   and d not in {'.git', 'node_modules', '__pycache__',
                                                 '.pytest_cache', 'dist', 'test-results'}
                    and not (Path(directory) / d).is_symlink()]
         for name in files:
@@ -108,7 +110,10 @@ def main():
             try:
                 api('POST', f'/api/session/{session}/command', {'name':'agent-export','text':''})
                 key = hashlib.sha256(json.dumps(session, separators=(',', ':')).encode()).hexdigest()
-                evidence = root / '.git/bdfl/agent-evals' / (key + '.json')
+                helper = Path(__file__).resolve().parents[2] / '.opencode/runtime/workspace.py'
+                state = subprocess.run([sys.executable, str(helper), '--repo', str(root), 'state-home'],
+                                       capture_output=True, text=True, timeout=30, check=True)
+                evidence = Path(json.loads(state.stdout)['directory']) / 'agent-evals' / (key + '.json')
                 result['contract_evidence'] = json.loads(evidence.read_text())
             except Exception as error:
                 result['contract_export_error'] = str(error)

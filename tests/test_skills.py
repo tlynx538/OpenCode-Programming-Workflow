@@ -167,7 +167,7 @@ class ProvenanceTests(unittest.TestCase):
                 self.assertEqual(s.permission(front['permissions'], 'skill', skill),
                                  'allow' if skill in self.manifest['agents'][role] else 'deny')
             for action in ('edit', 'shell', 'subagent', 'execute', 'unknown_tool', 'random_mcp_tool'):
-                expected = 'allow' if role == 'coder' and action == 'edit' else 'deny'
+                expected = 'allow' if action == 'edit' or (role in ('poseidon', 'team-lead') and action == 'shell') else 'deny'
                 self.assertEqual(s.permission(front['permissions'], action, '*'), expected)
             # Definitions explain integration, not embedded author methodologies.
             self.assertNotIn('NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST', body)

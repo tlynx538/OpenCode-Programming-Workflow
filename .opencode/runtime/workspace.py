@@ -66,26 +66,16 @@ def dispatch(root, payload):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', required=True, type=Path)
-    parser.add_argument('mode', choices=('call', 'follow-operation'))
+    parser.add_argument('mode', choices=('call', 'follow-operation', 'state-home'))
     parser.add_argument('identifier', nargs='?')
     args = parser.parse_args(argv)
     try:
         payload = json.load(sys.stdin) if args.mode == 'call' else None
         requested_root = args.repo.resolve()
-        probe = runtime.capture(['git', '-C', str(requested_root), 'rev-parse', '--show-toplevel'])
-        if probe.returncode != 0:
-            not_git = b'not a git repository' in probe.stderr.lower()
-            if not_git and args.mode == 'call' and payload.get('action') in (
-                    'session_start', 'settings', 'status', 'end_sandbox'):
-                # Sandbox support is optional for ordinary chats in non-Git folders.
-                # Do not create a repository or persist workspace state there.
-                print(json.dumps({'status': 'unavailable', 'reason': 'not_git_repository',
-                                  'repo': str(requested_root), 'settings': None,
-                                  'error': 'Docker workspace testing requires a Git repository; ordinary chat can continue.'}))
-                return 0
-            runtime.require(False, 'Cannot use workspace in this folder: ' +
-                            probe.stderr.decode(errors='replace')[-4000:])
-        root = Path(probe.stdout.decode().strip())
+        root = runtime.repository_root(requested_root) or requested_root
+        if args.mode == 'state-home':
+            print(json.dumps({'directory': str(runtime.workspace_home(root))}))
+            return 0
         if args.mode != 'call':
             logs.follow(root, args.identifier)
             return 0

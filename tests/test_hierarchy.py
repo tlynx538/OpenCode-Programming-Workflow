@@ -25,7 +25,7 @@ class HierarchyTests(unittest.TestCase):
         (self.bundle / 'agents' / (role + '.md')).write_text('---\n' + json.dumps(front) + '\n---' + body)
 
     def test_all_worker_target_pairs_and_unknown_targets_are_denied(self):
-        for role in s.ROLES - {'team-lead'}:
+        for role in s.ROLES - {'poseidon'}:
             front, _ = s.read_agent(self.bundle, role)
             self.assertEqual(front['permissions'][-1], {'action': 'subagent', 'resource': '*', 'effect': 'deny'})
             for target in s.ROLES | {'unknown', '*', 'general', 'explore'}:
@@ -38,16 +38,16 @@ class HierarchyTests(unittest.TestCase):
         for action, resources in {
             'read': ['.env', 'design-context/.env', 'design-context/customer.credentials.json',
                      '/home/user/.ssh/id_rsa', '/home/user/.config/opencode/opencode.json', '.git/config'],
-            'edit': ['src/app.tsx', '.opencode/agents/coder.md', '/tmp/file'],
+            'edit': ['.opencode/agents/coder.md'],
             'shell': ['pwd', 'python3 -c pass', 'git diff'],
             'execute': ['*'], 'external_directory': ['/tmp/*', '~/.config/opencode/*'],
-            'poseidon_workspace': ['*', 'settings', 'configure', 'test', 'end_sandbox'],
+            'poseidon_workspace': ['*', 'configure', 'test', 'end_sandbox'],
             'random_mcp_tool': ['*'], 'github_create_issue': ['*'], 'write': ['src/app.tsx']
         }.items():
             for resource in resources:
                 with self.subTest(action=action, resource=resource):
                     self.assertEqual(s.permission(rules, action, resource), 'deny')
-        for action, resource in [('read', 'src/app.tsx'), ('read', 'docs/spec.md'),
+        for action, resource in [('poseidon_workspace', 'settings'), ('poseidon_workspace', 'status'), ('edit', 'src/app.tsx'), ('system_access', '*'), ('read', 'src/app.tsx'), ('read', 'docs/spec.md'),
                                  ('read', 'design-context/reference.png'), ('read', '.'),
                                  ('glob', '**/*.tsx'), ('project_search', 'MenuButton'),
                                  ('webfetch', 'https://example.com'), ('websearch', 'accessible menu'),
@@ -66,7 +66,7 @@ class HierarchyTests(unittest.TestCase):
             ('poseidon', lambda f: f['permissions'].append({'action': 'subagent', 'resource': 'rogue', 'effect': 'allow'})),
             ('coder', lambda f: f['permissions'].append({'action': 'subagent', 'resource': 'reviewer', 'effect': 'allow'})),
             ('researcher', lambda f: f['permissions'].append({'action': 'shell', 'resource': 'pwd', 'effect': 'allow'})),
-            ('poseidon', lambda f: f.update(mode='primary')),
+            ('team-lead', lambda f: f.update(mode='primary')),
             ('researcher', lambda f: f.update(model='openai/gpt-6-sol')),
             ('researcher', lambda f: f['permissions'].append({'action': 'random_mcp_tool', 'resource': '*', 'effect': 'allow'})),
             ('researcher', lambda f: f['permissions'].append({'action': 'websearch', 'resource': '*', 'effect': 'deny'})),

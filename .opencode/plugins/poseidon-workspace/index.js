@@ -187,7 +187,7 @@ export default {
       }
       governor.event("tool-boundary", { wrapped, unavailable })
     })
-    const cleanupReliability = await reliability.setup(ctx)
+    const cleanupReliability = await reliability.setup(ctx, governor)
     return async () => {
       await cleanupReliability()
       events.abort()

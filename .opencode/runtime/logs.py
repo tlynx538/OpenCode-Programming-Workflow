@@ -1,7 +1,6 @@
 """Durable command logs and read-only followers for OpenCode's native shell panel."""
 from contextlib import contextmanager, redirect_stderr
 import json
-from pathlib import Path
 import re
 import sys
 import threading
@@ -12,9 +11,7 @@ import runtime as b
 
 def operation_directory(repo, operation_id):
     b.require(isinstance(operation_id, str) and re.fullmatch(r'[a-f0-9]{32}', operation_id), 'Invalid log operation ID')
-    common = Path(b.git(repo, 'rev-parse', '--git-common-dir').decode().strip())
-    common = (common if common.is_absolute() else Path(repo) / common).resolve()
-    return common / 'bdfl' / 'operations' / operation_id
+    return b.workspace_home(repo) / 'operations' / operation_id
 
 
 @contextmanager
